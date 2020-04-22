@@ -12,6 +12,8 @@ class Basic_LSTM(nn.Module):
 
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
 
+        self.embedding.weight.requires_grad = False
+
         self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers=1, bidirectional=bi, batch_first=True)
         if bi:
             self.output = nn.Linear(hidden_dim*2, num_of_tags)
