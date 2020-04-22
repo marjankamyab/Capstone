@@ -44,7 +44,7 @@ def train(train_dataset:ingest.Corpus, val_dataset:ingest.Corpus, test_dataset:i
             loss.backward()
             optimizer.step()
             epoch_loss += loss
-            model.zero_grad()
+            optimizer.zero_grad()
         #val and test evaluation between epochs
         print("epoch loss: " + str(epoch_loss.item()))
         val_file = evaluate(val_dataset, model, val_output_path, seed, num, crf)
