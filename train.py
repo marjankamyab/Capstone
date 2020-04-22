@@ -18,8 +18,14 @@ def train(train_dataset:ingest.Corpus, val_dataset:ingest.Corpus, test_dataset:i
     seed(manualSeed)
     np.random.seed(manualSeed)
     torch.manual_seed(manualSeed)
-    print("crf: "+ str(crf))
+    torch.cuda.manual_seed(manualSeed)
+    torch.cuda.manual_seed_all(manualSeed)
+    torch.backends.cudnn.enabled = False
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    print("crf: " + str(crf))
     print("Seed num: " + str(manualSeed))
+
     #model initialization
     model = word_lstm.Basic_LSTM(vocab_size, embedding_dim, hidden_dim, num_tags, bi=True, use_crf=crf)
     optimizer = optim.SGD(model.parameters(), lr=0.015)
@@ -33,7 +39,7 @@ def train(train_dataset:ingest.Corpus, val_dataset:ingest.Corpus, test_dataset:i
             optimizer.zero_grad()
             outs = model(sent)
             mask = ~(label.ge(num_tags-1))
-            gold = torch.masked_select(label, mask)
+            gold = torch.masked_select(label, mask) #mask paddings from gold labels
             if crf:
                 outs = outs.view((1, outs.size(0), outs.size(1)))
                 gold = gold.view(1, gold.size(0))
@@ -44,7 +50,7 @@ def train(train_dataset:ingest.Corpus, val_dataset:ingest.Corpus, test_dataset:i
             loss.backward()
             optimizer.step()
             epoch_loss += loss
-            optimizer.zero_grad()
+            #optimizer.zero_grad()
         #val and test evaluation between epochs
         print("epoch loss: " + str(epoch_loss.item()))
         val_file = evaluate(val_dataset, model, val_output_path, seed, num, crf)
