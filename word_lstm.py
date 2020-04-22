@@ -12,8 +12,6 @@ class Basic_LSTM(nn.Module):
 
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
 
-        self.embedding.weight.requires_grad = False
-
         self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers=1, bidirectional=bi, batch_first=True)
         if bi:
             self.output = nn.Linear(hidden_dim*2, num_of_tags)
@@ -24,7 +22,7 @@ class Basic_LSTM(nn.Module):
 
     def forward(self, sent):
         #torch.set_printoptions(edgeitems=500)
-        #hidden= 32, batch size = 5, num_tags= 18, embedding dim =50
+        #hidden= 32, batch size = 5, num_tags= 18
         sentence, seq_lengths = sent #sent is a tuple of (input btach, seq_lengths)
         #batch_size, sent_length = sentence.size() #sentence is a batch of sentences with dim= [batch size, max_sent_length]
         #print("sentence shape: " + str(sentence.shape))
@@ -41,7 +39,7 @@ class Basic_LSTM(nn.Module):
         #print("unpacked shape: " + str(unpacked_output.shape))
         mask = ~(unpacked_output.ge(inf))
         #print("mask" + str(mask))
-        masked = torch.masked_select(unpacked_output, mask) #output_shape = [1,sum(len(sentences))]
+        masked = torch.masked_select(unpacked_output, mask) #output_shape = [1,sum(len_sentences)]
         #print("masked shape: " + str(masked.shape))
         masked = masked.view(-1, hidden_dim)
         #print("masked shape: " + str(masked.shape))

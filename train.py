@@ -13,6 +13,7 @@ def train(train_dataset:ingest.Corpus, val_dataset:ingest.Corpus, test_dataset:i
           epoch:int=1, manualSeed=42, crf=False,
           val_output_path="./output/val/val_output", test_output_path="./output/test/test_output") \
           -> None:
+  #for manualSeed in range(manualSeed, manualSeed+5):
     #setting the random seed
     seed(manualSeed)
     np.random.seed(manualSeed)
@@ -22,6 +23,7 @@ def train(train_dataset:ingest.Corpus, val_dataset:ingest.Corpus, test_dataset:i
     #model initialization
     model = word_lstm.Basic_LSTM(vocab_size, embedding_dim, hidden_dim, num_tags, bi=True, use_crf=crf)
     optimizer = optim.SGD(model.parameters(), lr=0.015)
+    model.embedding.weight = nn.Parameter(weights)
     loss_function = nn.NLLLoss(ignore_index=num_tags-1, size_average=False)
     for num in range(epoch):
         epoch_loss = .0
@@ -42,7 +44,7 @@ def train(train_dataset:ingest.Corpus, val_dataset:ingest.Corpus, test_dataset:i
             loss.backward()
             optimizer.step()
             epoch_loss += loss
-            #optimizer.zero_grad()
+            model.zero_grad()
         #val and test evaluation between epochs
         print("epoch loss: " + str(epoch_loss.item()))
         val_file = evaluate(val_dataset, model, val_output_path, seed, num, crf)
