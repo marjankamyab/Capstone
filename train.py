@@ -1,51 +1,46 @@
 import preprocess, ingest, word_lstm
 import torch.nn.functional as F
-from random import seed, shuffle
+import random
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import subprocess
 
+# seed should essentially be initialized outside training to be consistent programwide specially for initializing oov vectors in preprocess file
+manualSeed = 42
+random.seed(manualSeed)
+np.random.seed(manualSeed)
+torch.manual_seed(manualSeed)
+print("Seed num: " + str(manualSeed))
 
 def train(train_dataset:ingest.Corpus, val_dataset:ingest.Corpus, test_dataset:ingest.Corpus,
-          vocab_size: int, embedding_dim:int, weights: torch.Tensor, hidden_dim:int, num_tags:int,
-          epoch:int=1, manualSeed=42, crf=False,
+          vocab_size: int, embedding_dim:int, weights: torch.Tensor, hidden_dim:int, num_tags:int, manualSeed,
+          epoch:int=1, crf=False,
           val_output_path="./output/val/val_output", test_output_path="./output/test/test_output") \
           -> None:
-  #for manualSeed in range(manualSeed, manualSeed+5):
-    #setting the random seed
-    seed(manualSeed)
-    np.random.seed(manualSeed)
-    torch.manual_seed(manualSeed)
-    torch.cuda.manual_seed(manualSeed)
-    torch.cuda.manual_seed_all(manualSeed)
-    torch.backends.cudnn.enabled = False
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
     print("crf: " + str(crf))
-    print("Seed num: " + str(manualSeed))
-
     #model initialization
-    model = word_lstm.Basic_LSTM(vocab_size, embedding_dim, hidden_dim, num_tags, bi=True, use_crf=crf)
+    model = word_lstm.Basic_LSTM(vocab_size, embedding_dim, hidden_dim, num_tags, use_crf=crf)
     optimizer = optim.SGD(model.parameters(), lr=0.015)
     model.embedding.weight = nn.Parameter(weights)
     loss_function = nn.NLLLoss(ignore_index=num_tags-1, size_average=False)
+    #train_dataset = train_dataset[:100]
     for num in range(epoch):
         epoch_loss = .0
         print("Epoch " + str(num) + ":")
-        shuffle(train_dataset)
+        random.shuffle(train_dataset)
         for batch,(sent,label) in enumerate(train_dataset):
             optimizer.zero_grad()
             outs = model(sent)
-            mask = ~(label.ge(num_tags-1))
-            gold = torch.masked_select(label, mask) #mask paddings from gold labels
+            mask = ~(label.ge(num_tags-1)) #mask paddings from gold labels
+            gold = torch.masked_select(label, mask)
             if crf:
                 outs = outs.view((1, outs.size(0), outs.size(1)))
                 gold = gold.view(1, gold.size(0))
                 loss = -(model.crf.forward(outs, gold))
             else:
-                tag_scores = F.log_softmax(outs.float(), dim=1)  # output shape: [sum(sent_lengths)_length, 18]
+                tag_scores = F.log_softmax(outs, dim=1)  #output shape: [number of tokens in the batch, 18]
                 loss = loss_function(tag_scores, gold)
             loss.backward()
             optimizer.step()
@@ -53,9 +48,8 @@ def train(train_dataset:ingest.Corpus, val_dataset:ingest.Corpus, test_dataset:i
             #optimizer.zero_grad()
         #val and test evaluation between epochs
         print("epoch loss: " + str(epoch_loss.item()))
-        val_file = evaluate(val_dataset, model, val_output_path, seed, num, crf)
-        test_file = evaluate(test_dataset, model, test_output_path, seed, num, crf)
-        #print("epoch loss: " + str(epoch_loss.item()))
+        val_file = evaluate(val_dataset, model, val_output_path, manualSeed, num, crf)
+        test_file = evaluate(test_dataset, model, test_output_path, manualSeed, num, crf)
         val_pl = pl2output(val_file)
         test_pl = pl2output(test_file)
         print('dev results: ', val_pl)
@@ -145,5 +139,5 @@ if __name__ == "__main__":
     vocab_size = vocab.vectors.size(0)
     embedding_dim = vocab.vectors.size(1)
     num_tags = len(labels)
-    train(train_data, val_data, test_data, vocab_size, embedding_dim, vocab.vectors, hidden_units, num_tags,
+    train(train_data, val_data, test_data, vocab_size, embedding_dim, vocab.vectors, hidden_units, num_tags, manualSeed,
           epoch=epochs, crf=False)
