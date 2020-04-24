@@ -6,17 +6,15 @@ from numpy import inf
 
 class Basic_LSTM(nn.Module):
 
-    def __init__(self, vocab_size, embedding_dim, hidden_dim, num_of_tags, bi=True, use_crf=False):
+    def __init__(self, vocab_size, embedding_dim, hidden_dim, num_of_tags, use_crf=False):
         super(Basic_LSTM, self).__init__()
-        self.num_of_tags = num_of_tags
 
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
 
-        self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers=1, bidirectional=bi, batch_first=True)
-        if bi:
-            self.output = nn.Linear(hidden_dim*2, num_of_tags)
-        else:
-            self.output = nn.Linear(hidden_dim, num_of_tags)
+        self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers=1, bidirectional=True, batch_first=True)
+
+        self.output = nn.Linear(hidden_dim*2, num_of_tags)
+
         if use_crf:
             self.crf = CRF(num_of_tags, batch_first=True)
 
@@ -28,7 +26,7 @@ class Basic_LSTM(nn.Module):
         #print("sentence shape: " + str(sentence.shape))
         embeddings = self.embedding(sentence)  #output shape:[5,_sent_length, 50]
         #print("embedding shape: " + str(embeddings.shape))
-        packed_input = pack_padded_sequence(embeddings, seq_lengths.numpy(), batch_first=True) #output shape: [sum(batch_sent_lengths), 50]
+        packed_input = pack_padded_sequence(embeddings, seq_lengths.cpu().numpy(), batch_first=True) #output shape: [sum(batch_sent_lengths), 50]
         #print("packed_input data shape:" + str(packed_input.data.shape))
         packed_output,  (ht, ct) = self.lstm(packed_input) # output shape: [sum(batch_sent_lengths), 64] if bidirectional
         #print("packed_output shape: " + str(packed_output.data.shape))
@@ -41,7 +39,7 @@ class Basic_LSTM(nn.Module):
         #print("mask" + str(mask))
         masked = torch.masked_select(unpacked_output, mask) #output_shape = [sum(seq_lengths)*64] if bidirectional
         #print("masked shape: " + str(masked.shape))
-        masked = masked.view(sum(seq_lengths), hidden_dim) #ooutput shape = [sum(seq_lengths, 64] if bidirectional
+        masked = masked.view(sum(seq_lengths), hidden_dim) #output shape = [sum(seq_lengths, 64] if bidirectional
         tag_space = self.output(masked)# output shape: [sum(seq_lengths, 18]
         #print("tag space shape: " + str(tag_space.shape))
         #print()
