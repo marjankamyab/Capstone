@@ -11,16 +11,18 @@ class Basic_LSTM(nn.Module):
 
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
 
+        self.embedding.weight.requires_grad = True
+
         self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers=1, bidirectional=True, batch_first=True)
 
         self.output = nn.Linear(hidden_dim*2, num_of_tags)
 
         if use_crf:
-            self.crf = CRF(num_of_tags, batch_first=True)
+            self.crf = CRF(num_of_tags-1, batch_first=True) # don't include the <pad> label
 
     def forward(self, sent):
         #torch.set_printoptions(edgeitems=500)
-        #hidden_dim= 32, batch size = 5, num_tags= 18
+        #hidden_dim= 32, batch size = 5, num_tags= 18, embedding_dim=50
         sentence, seq_lengths = sent #sent is a tuple of (input btach, seq_lengths)
         #batch_size, sent_length = sentence.size() #sentence is a batch of sentences with dim= [batch size, max_sent_length]
         #print("sentence shape: " + str(sentence.shape))
@@ -40,6 +42,7 @@ class Basic_LSTM(nn.Module):
         masked = torch.masked_select(unpacked_output, mask) #output_shape = [sum(seq_lengths)*64] if bidirectional
         #print("masked shape: " + str(masked.shape))
         masked = masked.view(sum(seq_lengths), hidden_dim) #output shape = [sum(seq_lengths, 64] if bidirectional
+        #print("masked shape: " + str(masked)"
         tag_space = self.output(masked)# output shape: [sum(seq_lengths, 18]
         #print("tag space shape: " + str(tag_space.shape))
         #print()

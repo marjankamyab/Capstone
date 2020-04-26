@@ -22,14 +22,14 @@ def build_vocab(train_corpus:ingest.Corpus, val_corpus:ingest.Corpus, test_corpu
     labels = label_counter.most_common()
     label2idx = {lab:id for id,(lab,count) in enumerate(labels)}
     label2idx['<pad>'] = len(labels)
-    # vocab vector
+    # initializing word vectors
     vocab_counter = Counter(vocab_lst)
     vocabulary = Vocab(vocab_counter, vectors=pretrained, specials_first=False)
-    scale = np.sqrt(3.0/embedding_dim)
+    scale = np.sqrt(3/embedding_dim)
     perfect_match = 0
     case_match = 0
     no_match = 0
-    for vocab in vocabulary.stoi:
+    for i,vocab in enumerate(vocabulary.stoi):
         if vocab in pretrained.stoi:
             vocabulary.vectors[vocabulary.stoi[vocab]] = pretrained.vectors[pretrained.stoi[vocab]]
             perfect_match+=1
@@ -37,7 +37,7 @@ def build_vocab(train_corpus:ingest.Corpus, val_corpus:ingest.Corpus, test_corpu
             vocabulary.vectors[vocabulary.stoi[vocab]] = pretrained.vectors[pretrained.stoi[vocab.lower()]]
             case_match+=1
         else:
-            vocabulary.vectors[vocabulary.stoi[vocab]] = torch.tensor(np.random.uniform(-scale, scale, embedding_dim))
+            vocabulary.vectors[vocabulary.stoi[vocab]] = torch.from_numpy(np.random.uniform(-scale, scale, embedding_dim))
             no_match+=1
     print("vocabulary size: " + str(len(vocabulary)))
     print("perfect match: " + str(perfect_match)+ "\t" + "case match: " + str(case_match) + "\t" + "no match: " + str(no_match))
@@ -63,8 +63,10 @@ def _get_tokens(corpus: ingest.Corpus) -> Tuple[List[str], List[str]]:
                 tokens.append(token)
     return tokens, labels
 
-def _index_seq(mappings:Dict[str,int], sequence:Tuple[str, ...], label=False) -> torch.LongTensor:
-    return [mappings[_normalize_digits(element)] for element in sequence]  # shape = torch.Size([len(sentence)])
+def _index_seq(mappings:Dict[str,int], sequence:Tuple[str, ...], label) -> torch.LongTensor:
+    if label:
+        return [mappings[_normalize_digits(element)] for element in sequence]  # shape = torch.Size([len(sentence)])
+    return [mappings[_normalize_digits(element)] for element in sequence]
 
 def _padding(mapping:Dict[str,int], seq:List[int], max_length:int) -> torch.LongTensor:
     while(len(seq)< max_length):
@@ -74,15 +76,26 @@ def _padding(mapping:Dict[str,int], seq:List[int], max_length:int) -> torch.Long
 def _batchify(lst, n):
     batches = []
     for i in range(0, len(lst), n):
-        batches.append(lst[i:i + n])
+        batches.append(lst[i: i+n])
     return batches
 
+''''
+devides the data into several batches. 
+batch size is the same but sentence length varies over the batches
+the sentence length for each batch is set to the length of the sentence with maximum length
+'''
 def prepare_dataset(corpus:ingest.Corpus, vocabulary: Vocab, label2idx: Dict[str,int], batch_size:int=1) -> Tuple[torch.Tensor,torch.Tensor]:
     dataset= []
-    indexed_sentences = [_index_seq(vocabulary.stoi, sent) for document in corpus for sent in document.sentences]
-    indexed_labels = [_index_seq(label2idx, lab) for document in corpus for lab in document.labels ]
+    indexed_sents = [_index_seq(vocabulary.stoi, sent, False) for document in corpus for sent in document.sentences]
+    indexed_labs = [_index_seq(label2idx, lab, True) for document in corpus for lab in document.labels]
+    lst = list(zip(indexed_sents, indexed_labs))
+    random.shuffle(lst)
+    indexed_sentences, indexed_labels = zip(*lst)
+    #print([vocabulary.itos[i] for i in indexed_sentences[0]])
+    #print([list(label2idx.keys())[i] for i in indexed_labels[0]])
     sent_batch = _batchify(indexed_sentences, batch_size)
     label_batch = _batchify(indexed_labels, batch_size)
+    total_instances = 0
     for i, sentences in enumerate(sent_batch):
         labels = label_batch[i]
         new_sent_batch = []
@@ -92,6 +105,7 @@ def prepare_dataset(corpus:ingest.Corpus, vocabulary: Vocab, label2idx: Dict[str
         for j,sent in enumerate(sentences):
             vectorized_sent = _padding(vocabulary.stoi, sent, seq_lengths.max())
             new_sent_batch.append(vectorized_sent)
+            total_instances += 1
         for k, label in enumerate(labels):
             vectorized_label = _padding(label2idx, label, seq_lengths.max())
             new_label_batch.append(vectorized_label)
@@ -99,13 +113,15 @@ def prepare_dataset(corpus:ingest.Corpus, vocabulary: Vocab, label2idx: Dict[str
         new_label_batch = torch.stack(new_label_batch)
         new_sent_batch = new_sent_batch[perm_idx]
         new_label_batch = new_label_batch[perm_idx]
-        dataset.append([(new_sent_batch, seq_lengths), new_label_batch])
+        dataset.append([[new_sent_batch, seq_lengths], new_label_batch])
     return dataset
+
+
 
 if __name__ == '__main__':
     conll_train = ingest.load_conll('data/conll2003/en/BIOES/NE_only/train.bmes')
     conll_val = ingest.load_conll('data/conll2003/en/BIOES/NE_only/valid.bmes')
-    conll_test = ingest.load_conll('data/conll2003/en/BIOES/NE_only/bmes')
+    conll_test = ingest.load_conll('data/conll2003/en/BIOES/NE_only/test.bmes')
     vocab, labels= build_vocab(conll_train, conll_val, conll_test)
     prepare_dataset(conll_train, vocab, labels, batch_size=10)
 

@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 import subprocess
 
+
 # seed should essentially be initialized outside training to be consistent programwide specially for initializing oov vectors in preprocess file
 manualSeed = 42
 random.seed(manualSeed)
@@ -14,12 +15,12 @@ np.random.seed(manualSeed)
 torch.manual_seed(manualSeed)
 print("Seed num: " + str(manualSeed))
 
+
 def train(train_dataset:ingest.Corpus, val_dataset:ingest.Corpus, test_dataset:ingest.Corpus,
           vocab_size: int, embedding_dim:int, weights: torch.Tensor, hidden_dim:int, num_tags:int, manualSeed,
           epoch:int=1, crf=False,
           val_output_path="./output/val/val_output", test_output_path="./output/test/test_output") \
           -> None:
-    print("crf: " + str(crf))
     #model initialization
     model = word_lstm.Basic_LSTM(vocab_size, embedding_dim, hidden_dim, num_tags, use_crf=crf)
     optimizer = optim.SGD(model.parameters(), lr=0.015)
@@ -30,7 +31,8 @@ def train(train_dataset:ingest.Corpus, val_dataset:ingest.Corpus, test_dataset:i
         epoch_loss = .0
         print("Epoch " + str(num) + ":")
         random.shuffle(train_dataset)
-        for batch,(sent,label) in enumerate(train_dataset):
+        for batch,(sent, label) in enumerate(train_dataset):
+            #shuffle batch
             optimizer.zero_grad()
             outs = model(sent)
             mask = ~(label.ge(num_tags-1)) #mask paddings from gold labels
@@ -45,7 +47,7 @@ def train(train_dataset:ingest.Corpus, val_dataset:ingest.Corpus, test_dataset:i
             loss.backward()
             optimizer.step()
             epoch_loss += loss
-            #optimizer.zero_grad()
+            optimizer.zero_grad()
         #val and test evaluation between epochs
         print("epoch loss: " + str(epoch_loss.item()))
         val_file = evaluate(val_dataset, model, val_output_path, manualSeed, num, crf)
@@ -57,13 +59,7 @@ def train(train_dataset:ingest.Corpus, val_dataset:ingest.Corpus, test_dataset:i
         print()
 
 
-def pl2output(file):
-    with open(file, 'rb', 0) as f:
-        pl2string = subprocess.check_output(['perl', 'conlleval.pl'], stdin=f, universal_newlines=True)
-    return pl2string
-
-
-def evaluate(dataset:list, model, output_file, epoch:int, seed, crf:bool):
+def evaluate(dataset:list, model, output_file, epoch:int, manualseed, crf:bool):
     total_gold = []
     total_pred = []
     total_tokens = []
@@ -81,7 +77,7 @@ def evaluate(dataset:list, model, output_file, epoch:int, seed, crf:bool):
     golds = [label_lst[gold.item()] for gold in total_gold]
     preds = [label_lst[tag] for tag in total_pred]
     zipped = zip(tokens, golds, preds)
-    output_path = output_file + str(seed) + str(epoch) + '.txt'
+    output_path = output_file + str(manualseed) + str(epoch) + '.txt'
     write_output(output_path, zipped)
     return output_path
 
@@ -109,25 +105,36 @@ def write_output(file, zipped_file):
             f.write("\n")
 
 
+def pl2output(file):
+    with open(file, 'rb', 0) as f:
+        pl2string = subprocess.check_output(['perl', 'conlleval.pl'], stdin=f, universal_newlines=True)
+    return pl2string
+
+
 if __name__ == "__main__":
     batch_size = 64
     hidden_units = 32
     epochs = 100
     lr = 0.015
+    crf = False
     conll_train = ingest.load_conll('data/conll2003/en/BIOES/NE_only/train.bmes')
     conll_val = ingest.load_conll('data/conll2003/en/BIOES/NE_only/valid.bmes')
     conll_test = ingest.load_conll('data/conll2003/en/BIOES/NE_only/test.bmes')
     train_tokens = []
     val_tokens = []
     test_tokens = []
+    total_instances = 0
     for document in conll_train:
         for i,sent in enumerate(document.sentences):
-           train_tokens.extend(sent)
+            train_tokens.extend(sent)
+            total_instances += 1
     #training
     vocab, labels= preprocess.build_vocab(conll_train, conll_val, conll_test)
     label_lst = list(labels.keys())
     vocab_lst = vocab.itos
+    print("train number of instances: " + str(total_instances))
     print("train number of tokens: " + str(len(train_tokens)))
+    print("crf: " + str(crf))
     print("batch size: " + str(batch_size))
     print("learning rate: " + str(lr))
     print("number of hidden units: " + str(hidden_units))
