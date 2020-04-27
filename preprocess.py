@@ -3,6 +3,7 @@ from collections import Counter
 from torchtext.vocab import Vocab, GloVe
 from numpy import random
 import numpy as np
+from torch.autograd import Variable
 import torch
 import ingest
 
@@ -29,6 +30,7 @@ def build_vocab(train_corpus:ingest.Corpus, val_corpus:ingest.Corpus, test_corpu
     vocab_counter = Counter(vocab_lst)
     vocabulary = Vocab(vocab_counter, vectors=pretrained, specials_first=False)
     scale = np.sqrt(3.0/embedding_dim)
+    unk =  torch.tensor(np.random.uniform(-scale, scale, embedding_dim), requires_grad=True)
     perfect_match = 0
     case_match = 0
     no_match = 0
@@ -43,7 +45,7 @@ def build_vocab(train_corpus:ingest.Corpus, val_corpus:ingest.Corpus, test_corpu
             case_match+=1
 
         else:
-            vocabulary.vectors[vocabulary.stoi[vocab]] = torch.tensor(np.random.uniform(-scale, scale, embedding_dim),requires_grad=True).long()
+            vocabulary.vectors[vocabulary.stoi[vocab]] = unk
             no_match+=1
 
     print("vocabulary size: " + str(len(vocabulary.vectors)))
