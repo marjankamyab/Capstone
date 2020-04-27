@@ -20,7 +20,7 @@ print("Seed num: " + str(manualSeed))
 def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Corpus,
           vocabulary, label2idx: Dict, embedding_dim:int, hidden_dim:int,
           batch_size:int=1, epoch:int=1, crf=False,
-          val_output_path="./output/val/val_output", test_output_path="./output/test/test_output") \
+          val_output_path="./output/output_files/val/val_output", test_output_path="./output/output_files/test/test_output") \
           -> None:
 
     val_dataset = prepare_dataset(val_data, vocabulary, label2idx)
@@ -39,13 +39,14 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
 
     #training
     for num in range(epoch):
-        print("Epoch " + str(num) + ":")
         train_dataset = prepare_dataset(train_data, vocabulary, label2idx)
+        print("Epoch " + str(num) + ":")
         random.shuffle(train_dataset) ##shuffle train data and then batch the shuffled data
+        print("Shuffle: first input list: " + str(train_dataset[0][0]))
+
         model.train()
         model.zero_grad()
 
-        print("Shuffle: first input list: " + str(train_dataset[0][0]))
         batched_train = batch_data(train_dataset, vocabulary, label2idx, batch_size)
         epoch_loss = .0
         batch = 0

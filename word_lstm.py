@@ -2,7 +2,6 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from numpy import inf
 import torch.nn as nn
 from torchcrf import CRF
-import torch.nn.functional as F
 import torch
 
 class Basic_LSTM(nn.Module):
@@ -39,7 +38,7 @@ class Basic_LSTM(nn.Module):
         unpacked_out, _ = pad_packed_sequence(lstm_out, batch_first=True, padding_value= inf) #output shape: [5, max_sent_length, 64] if bidirectional
         #print("unpacked_output shape: " + str(unpacked_out.data.shape))
         unpacked_out = unpacked_out.contiguous() #same shape
-        #print("unpacked shape: " + str(unpacked_output.shape))
+        #print("unpacked shape: " + str(unpacked_out.shape))
         mask = ~(unpacked_out.ge(inf)) #mask paddings from unpacked tensor
         #print("mask" + str(mask))
         masked = torch.masked_select(unpacked_out, mask) #output_shape = [sum(seq_lengths)*64] if bidirectional

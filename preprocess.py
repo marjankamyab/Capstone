@@ -3,7 +3,6 @@ from collections import Counter
 from torchtext.vocab import Vocab, GloVe
 from numpy import random
 import numpy as np
-from torch.autograd import Variable
 import torch
 import ingest
 
