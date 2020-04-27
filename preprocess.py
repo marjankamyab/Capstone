@@ -14,6 +14,7 @@ embedding_dim = pretrained.vectors.size(1)
 
 
 def build_vocab(train_corpus:ingest.Corpus, val_corpus:ingest.Corpus, test_corpus:ingest.Corpus) -> Tuple[Vocab, Dict[str,int]]:
+
     train_tokens, label_lst = _get_tokens(train_corpus)
     val_tokens, _ = _get_tokens(val_corpus)
     test_tokens, _ = _get_tokens(test_corpus)
@@ -42,13 +43,14 @@ def build_vocab(train_corpus:ingest.Corpus, val_corpus:ingest.Corpus, test_corpu
             case_match+=1
 
         else:
-            vocabulary.vectors[vocabulary.stoi[vocab]] = torch.from_numpy(np.random.uniform(-scale, scale, embedding_dim))
+            vocabulary.vectors[vocabulary.stoi[vocab]] = torch.tensor(np.random.uniform(-scale, scale, embedding_dim),requires_grad=True).long()
             no_match+=1
 
-    print("vocabulary size: " + str(len(vocabulary)))
+    print("vocabulary size: " + str(len(vocabulary.vectors)))
     print("perfect match: " + str(perfect_match)+ "\t" + "case match: " + str(case_match) + "\t" + "no match: " + str(no_match))
 
-    return pretrained, vocabulary, label2idx
+    return vocabulary, label2idx
+
 
 def _normalize_digits(token):
     new_token = ""
@@ -59,6 +61,7 @@ def _normalize_digits(token):
             new_token += char
     return new_token
 
+
 def _get_tokens(corpus: ingest.Corpus) -> Tuple[List[str], List[str]]:
     tokens = []
     labels = []
@@ -66,9 +69,9 @@ def _get_tokens(corpus: ingest.Corpus) -> Tuple[List[str], List[str]]:
         for i,sentence in enumerate(document.sentences):
             labels.extend(document.labels[i])
             for token in sentence:
-                token = _normalize_digits(token)
-                tokens.append(token)
+                tokens.append(_normalize_digits(token))
     return tokens, labels
+
 
 if __name__ == '__main__':
     conll_train = ingest.load_conll('data/conll2003/en/BIOES/NE_only/train.bmes')
