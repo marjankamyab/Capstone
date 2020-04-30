@@ -20,7 +20,7 @@ class Basic_LSTM(nn.Module):
         self.output = nn.Linear(self.hidden, num_of_tags)
 
         if use_crf:
-            self.crf = CRF(num_of_tags, batch_first=True) # don't include the <pad> label
+            self.crf = CRF(num_of_tags, batch_first=True)
 
 
     def forward(self, sent):
