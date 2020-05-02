@@ -35,7 +35,7 @@ class Basic_LSTM(nn.Module):
         #print("packed_input data shape:" + str(packed_out.data.shape))
         lstm_out, hidden = self.lstm(packed_out) # output shape: [sum(batch_sent_lengths), 64] if bidirectional
         #print("packed_output shape: " + str(lstm_out.data.shape))
-        unpacked_out, _ = pad_packed_sequence(lstm_out, batch_first=True, padding_value= inf) #output shape: [5, max_sent_length, 64] if bidirectional
+        unpacked_out, _ = pad_packed_sequence(lstm_out, batch_first=True, padding_value=inf) #output shape: [5, max_sent_length, 64] if bidirectional
         #print("unpacked_output shape: " + str(unpacked_out.data.shape))
         unpacked_out = unpacked_out.contiguous() #same shape
         #print("unpacked shape: " + str(unpacked_out.shape))

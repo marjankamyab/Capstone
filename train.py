@@ -24,6 +24,7 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
           val_output_path="./output/output_files/val/val_output",
           test_output_path="./output/output_files/test/test_output") \
           -> None:
+    print("crf: " + str(crf))
 
     val_dataset = prepare_dataset(val_data, vocabulary, label2idx)
     test_dataset = prepare_dataset(test_data, vocabulary, label2idx)
@@ -49,6 +50,7 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
         model.train()
         optimizer = lr_decay(optimizer, num, decay_rate, initial_lr)
         optimizer.zero_grad()
+
         batch = 0
         epoch_loss = .0
         for i, (sent,label) in enumerate(batched_train):
@@ -56,7 +58,6 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
             mask = ~(label.ge(num_tags)) ##mask paddings from gold labels
             gold = torch.masked_select(label, mask)
             outs = model(sent)
-
             if crf:
                 gold = torch.unsqueeze(gold, 0)
                 score = torch.unsqueeze(outs, 0)

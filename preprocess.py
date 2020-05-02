@@ -29,7 +29,6 @@ def build_vocab(train_corpus:ingest.Corpus, val_corpus:ingest.Corpus, test_corpu
     vocab_counter = Counter(vocab_lst)
     vocabulary = Vocab(vocab_counter, vectors=pretrained, specials_first=False)
     scale = np.sqrt(3.0/embedding_dim)
-    unk =  torch.tensor(np.random.uniform(-scale, scale, embedding_dim), requires_grad=True)
     perfect_match = 0
     case_match = 0
     no_match = 0
@@ -38,13 +37,11 @@ def build_vocab(train_corpus:ingest.Corpus, val_corpus:ingest.Corpus, test_corpu
         if vocab in pretrained.stoi:
             vocabulary.vectors[vocabulary.stoi[vocab]] = pretrained.vectors[pretrained.stoi[vocab]]
             perfect_match+=1
-
         elif vocab.lower() in pretrained.stoi:
             vocabulary.vectors[vocabulary.stoi[vocab]] = pretrained.vectors[pretrained.stoi[vocab.lower()]]
             case_match+=1
-
         else:
-            vocabulary.vectors[vocabulary.stoi[vocab]] = unk
+            vocabulary.vectors[vocabulary.stoi[vocab]] = torch.tensor(np.random.uniform(-scale, scale, embedding_dim), requires_grad=True)
             no_match+=1
 
     print("vocabulary size: " + str(len(vocabulary.vectors)))
