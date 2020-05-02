@@ -66,6 +66,16 @@ class _CoNLLIngester:
             assert len(self.sentences) == len(self.labels)
             assert len(self.sentence_tokens) == len(self.sentence_labels)
 
+            if line.startswith("-DOCSTART-"):
+                # Add the last sentence if needed
+                if self.sentence_tokens:
+                    self._complete_sentence()
+
+                # Create a document if there are sentences, otherwise we are at the first
+                # docstart in the corpus and there's nothing to create
+                if self.sentences:
+                    yield self._create_document()
+
             if line.strip():
                 # Sample line:
                 # German JJ B-NP B-MISC
