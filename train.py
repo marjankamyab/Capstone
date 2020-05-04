@@ -1,5 +1,5 @@
 from typing import List, Dict, Tuple
-import preprocess, ingest, word_lstm
+import preprocess, ingest, word_lstm, word_cnn
 import random
 import numpy as np
 import torch
@@ -19,26 +19,26 @@ print("Seed num: " + str(manualSeed))
 
 
 def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Corpus,
-          vocabulary, label2idx, embedding_dim:int, hidden_dim:int,
+          vocabulary, label2idx,
+          embedding_dim:int, hidden_dim:int, cnn_layers:int,
           batch_size:int=1, initial_lr:float=0.015, decay_rate:float=0.0, epoch:int=1, crf=False,
           val_output_path="./output/output_files/val/val_output",
           test_output_path="./output/output_files/test/test_output") \
           -> None:
-    print("crf: " + str(crf))
 
     val_dataset = prepare_dataset(val_data, vocabulary, label2idx)
     test_dataset = prepare_dataset(test_data, vocabulary, label2idx)
-
     batched_val = batch_data(val_dataset, vocabulary, label2idx, batch_size)
     batched_test = batch_data(test_dataset, vocabulary, label2idx, batch_size)
 
     #model initialization
     vocab_size = len(vocabulary)
     num_tags = len(labels)
-    model = word_lstm.Basic_LSTM(vocab_size, embedding_dim, hidden_dim, num_tags, use_crf=crf)
+    model = word_lstm.BiLSTM(vocab_size, embedding_dim, hidden_dim, num_tags, use_crf=crf)
+    #model = word_cnn.CNN(vocab_size, embedding_dim, hidden_dim, cnn_layers, num_tags)
     model.embedding.weight = nn.Parameter(vocabulary.vectors)
     optimizer = optim.SGD(model.parameters(), lr=initial_lr, weight_decay=1e-8)
-    loss_function = nn.NLLLoss(ignore_index=num_tags, size_average=False)
+    loss_function = nn.NLLLoss(ignore_index=-1, size_average=False)
 
     #training
     for num in range(epoch):
@@ -49,33 +49,31 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
         batched_train = batch_data(train_dataset, vocabulary, label2idx, batch_size)
         model.train()
         optimizer = lr_decay(optimizer, num, decay_rate, initial_lr)
-        optimizer.zero_grad()
-
         batch = 0
-        epoch_loss = .0
+        epoch_loss = 0.0
         for i, (sent,label) in enumerate(batched_train):
+            optimizer.zero_grad()
             batch += 1
-            mask = ~(label.ge(num_tags)) ##mask paddings from gold labels
-            gold = torch.masked_select(label, mask)
             outs = model(sent)
+
             if crf:
-                gold = torch.unsqueeze(gold, 0)
-                score = torch.unsqueeze(outs, 0)
-                loss = -(model.crf.forward(score, gold))
+                mask = (label >= 0)
+                loss = -(model.crf.forward(outs, label, mask=mask))
             else:
-                score = F.log_softmax(outs, dim=1)  # output shape: [number of tokens in the batch, 17]
+                score = model.softmax(outs)  # output shape: [number of tokens in the batch, 17]
+                score = torch.flatten(score, end_dim=1)
+                gold = torch.flatten(label)
                 loss = loss_function(score, gold)
 
             loss.backward()
-            epoch_loss += loss
+            epoch_loss += loss.detach().item()
             optimizer.step()
-            optimizer.zero_grad()
 
         #val and test evaluation between epochs
         ext = str(num) + "_" + str(batch)
-        print(" epoch loss: " + str(epoch_loss.item()))
-        val_file = evaluate(batched_val, model, num_tags, val_output_path, ext, crf)
-        test_file = evaluate(batched_test, model, num_tags, test_output_path, ext, crf)
+        print(" epoch loss: " + str(epoch_loss))
+        val_file = evaluate(batched_val, model, val_output_path, ext, crf)
+        test_file = evaluate(batched_test, model, test_output_path, ext, crf)
         val_pl = pl2output(val_file)
         test_pl = pl2output(test_file)
         print('dev results: ', val_pl)
@@ -83,17 +81,17 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
         print()
 
 
-def evaluate(dataset:List, model, num_tags:int, output_file, extension, crf):
+def evaluate(dataset:List, model, output_file, extension, crf):
     total_gold = []
     total_pred = []
     total_tokens = []
     for i,(sent_seq, gold_seq) in enumerate(dataset):
-        batch_sents = sent_seq[0]
-        gold_mask = ~(gold_seq.ge(num_tags))
-        batch_mask = ~(batch_sents.ge(vocab['<pad>']))
-        batch_sents = torch.masked_select(batch_sents, batch_mask)
-        gold = torch.masked_select(gold_seq, gold_mask)
-        pred = predict(model, sent_seq, crf)
+        mask = (gold_seq >= 0)
+        pred = predict(model, sent_seq, mask, crf)
+
+        gold = torch.masked_select(gold_seq, mask)
+        batch_sents = torch.masked_select(sent_seq[0], mask)
+
         total_tokens.extend(batch_sents)
         total_gold.extend(gold)
         total_pred.extend(pred)
@@ -102,26 +100,11 @@ def evaluate(dataset:List, model, num_tags:int, output_file, extension, crf):
     golds = [label_lst[gold.item()] for gold in total_gold]
     preds = [label_lst[tag] for tag in total_pred]
     zipped = zip(tokens, golds, preds)
+
     output_path = output_file + str(extension) + '.txt'
     write_output(output_path, zipped)
 
     return output_path
-
-
-def predict(model, sent:List[List], crf:bool):
-    output = model(sent)
-    batch_predictions = []
-    if crf:
-        output = torch.unsqueeze(output, 0)
-        pred_lst = model.crf.decode(output)  ##output type: List[List[int]]
-        for pred in pred_lst[0]:
-            batch_predictions.append(pred)
-    else:
-        for i in range(output.size(0)):
-            pred = torch.argmax(output[i])  ##gathering token predictions for the entire batch
-            batch_predictions.append(pred.item())
-
-    return batch_predictions
 
 
 def lr_decay(optimizer, epoch, decay_rate, init_lr):
@@ -130,6 +113,21 @@ def lr_decay(optimizer, epoch, decay_rate, init_lr):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return optimizer
+
+
+def predict(model, sent:List[List], mask: torch.Tensor, crf:bool):
+    output = model(sent)
+    batch_predictions = []
+    if crf:
+        pred_lst = model.crf.decode(output, mask=mask)  ##output type: List[List[int]]
+        for pred in pred_lst:
+            batch_predictions.extend(pred)
+    else:
+        pred = torch.argmax(output, dim=2)  ##gathering token predictions for the entire batch
+        pred = torch.masked_select(pred, mask)
+        batch_predictions = [pred[i].detach().item() for i in range(len(pred))]
+
+    return batch_predictions
 
 
 def write_output(file, zipped_file):
@@ -158,11 +156,11 @@ def batch_data(data, vocabulary, label2idx, batch_size):
         seq_lengths, perm_idx = seq_lengths.sort(0, descending=True)
 
         for j, sent in enumerate(sentences):
-            padded_sent = _padding(sent, seq_lengths.max(), vocabulary.stoi['<pad>'])
+            padded_sent = _padding(sent, seq_lengths.max(), vocabulary.stoi["<pad>"])
             new_sent_batch.append(padded_sent)
 
         for k, label in enumerate(labels):
-            padded_label = _padding(label, seq_lengths.max(), len(label2idx))
+            padded_label = _padding(label, seq_lengths.max(), -1)
             new_label_batch.append(padded_label)
 
         new_sent_batch = torch.stack(new_sent_batch)
@@ -183,7 +181,7 @@ def _batchify(lst, n):
 def _padding(seq:List[int], max_length:int, pad_value) -> torch.LongTensor:
     while(len(seq)< max_length):
         seq.append(pad_value)
-    return torch.tensor(seq, dtype=torch.float, requires_grad= True).long()
+    return torch.LongTensor(seq)
 
 def _index_seq(mappings:Dict[str,int], sequence:Tuple[str, ...]) -> List[int]:
     return [mappings[preprocess._normalize_digits(element)] for element in sequence]  # shape = torch.Size([len(sentence)])
@@ -198,7 +196,7 @@ if __name__ == "__main__":
     hidden_units = 200
     epochs = 100
     lr = 0.015
-    crf = True
+    crf = False
     conll_train = ingest.load_conll('data/conll2003/en/BIOES/NE_only/train.bmes')
     conll_val = ingest.load_conll('data/conll2003/en/BIOES/NE_only/valid.bmes')
     conll_test = ingest.load_conll('data/conll2003/en/BIOES/NE_only/test.bmes')
@@ -222,5 +220,5 @@ if __name__ == "__main__":
     print("number of hidden units: " + str(hidden_units))
     print("number of epochs: " + str(epochs))
     print("tag scheme: " + str(labels))
-    train(conll_train, conll_val, conll_test, vocab, labels, embedding_dim, hidden_units,
-          batch_size=batch_size, decay_rate=0.05, epoch=epochs, crf=crf)
+    train(conll_train, conll_val, conll_test, vocab, labels, embedding_dim, hidden_units, 4,
+          batch_size=batch_size, initial_lr=lr, decay_rate=0.05, epoch=epochs, crf=crf)

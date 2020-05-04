@@ -20,7 +20,7 @@ def build_vocab(train_corpus:ingest.Corpus, val_corpus:ingest.Corpus, test_corpu
     test_tokens, _ = _get_tokens(test_corpus)
     vocab_lst = train_tokens + val_tokens + test_tokens
 
-    # label dictionary
+    # initializing label dictionary
     label_counter = Counter(label_lst)
     labels = label_counter.most_common()
     label2idx = {lab:id for id,(lab,count) in enumerate(labels)}
@@ -28,11 +28,11 @@ def build_vocab(train_corpus:ingest.Corpus, val_corpus:ingest.Corpus, test_corpu
     # initializing word vectors
     vocab_counter = Counter(vocab_lst)
     vocabulary = Vocab(vocab_counter, vectors=pretrained, specials_first=False)
+
     scale = np.sqrt(3.0/embedding_dim)
     perfect_match = 0
     case_match = 0
     no_match = 0
-
     for i,vocab in enumerate(vocabulary.stoi):
         if vocab in pretrained.stoi:
             vocabulary.vectors[vocabulary.stoi[vocab]] = pretrained.vectors[pretrained.stoi[vocab]]

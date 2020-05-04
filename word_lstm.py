@@ -4,20 +4,24 @@ import torch.nn as nn
 from torchcrf import CRF
 import torch
 
-class Basic_LSTM(nn.Module):
+class BiLSTM(nn.Module):
 
     def __init__(self, vocab_size, embedding_dim, hidden_dim, num_of_tags, use_crf=False):
-        super(Basic_LSTM, self).__init__()
+        super(BiLSTM, self).__init__()
 
-        self.hidden = hidden_dim*2
+        assert hidden_dim % 2 == 0
+
+        self.hidden_dim = hidden_dim
 
         self.use_crf = use_crf
 
+        self.softmax = nn.LogSoftmax(2)
+
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
 
-        self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers=1, bidirectional=True, batch_first=True)
+        self.lstm = nn.LSTM(embedding_dim, self.hidden_dim//2, num_layers=1, bidirectional=True, batch_first=True)
 
-        self.output = nn.Linear(self.hidden, num_of_tags)
+        self.output = nn.Linear(self.hidden_dim, num_of_tags)
 
         if use_crf:
             self.crf = CRF(num_of_tags, batch_first=True)
@@ -35,21 +39,12 @@ class Basic_LSTM(nn.Module):
         #print("packed_input data shape:" + str(packed_out.data.shape))
         lstm_out, hidden = self.lstm(packed_out) # output shape: [sum(batch_sent_lengths), 64] if bidirectional
         #print("packed_output shape: " + str(lstm_out.data.shape))
-        unpacked_out, _ = pad_packed_sequence(lstm_out, batch_first=True, padding_value=inf) #output shape: [5, max_sent_length, 64] if bidirectional
+        unpacked_out, _ = pad_packed_sequence(lstm_out, batch_first=True, padding_value=-1) #output shape: [5, max_sent_length, 64] if bidirectional
         #print("unpacked_output shape: " + str(unpacked_out.data.shape))
-        unpacked_out = unpacked_out.contiguous() #same shape
-        #print("unpacked shape: " + str(unpacked_out.shape))
-        mask = ~(unpacked_out.ge(inf)) #mask paddings from unpacked tensor
-        #print("mask" + str(mask))
-        masked = torch.masked_select(unpacked_out, mask) #output_shape = [sum(seq_lengths)*64] if bidirectional
-        #print("masked shape: " + str(masked.shape))
-        masked = masked.view(sum(seq_lengths), self.hidden) #output shape = [sum(seq_lengths, 64] if bidirectional
-        #print("masked shape: " + str(masked.shape))
-        tag_space = self.output(masked)# output shape: [sum(seq_lengths, 17]
-        #print("tag space shape: " + str(tag_space.shape))
-        # print()
-        return tag_space
-
+        output = self.output(unpacked_out)# output shape: [sum(seq_lengths, 17]
+        #print("output shape: " + str(output.shape))
+        #print()
+        return output
 
 
 
