@@ -38,25 +38,31 @@ class CNN(nn.Module):
 
 
   def forward(self, sent):
+
       sentence, _ = sent
 
       embeddings = self.embedding(sentence)
 
       input = torch.tanh(self.input(embeddings)).transpose(2,1).contiguous()
+      #print("input shape: " + str(input.shape))
 
-      cnn_in = torch.relu(self.conv_lst[0](input))
-      if sentence.size(0)>1: cnn_in = self.norm_lst[0](cnn_in)
+      cnn_in = F.relu(self.conv_lst[0](input))
+      if sentence.size(0)>1:
+          cnn_in = self.norm_lst[0](cnn_in)
 
       for i in range(1,self.num_of_layers):
-        cnn_in = torch.relu(self.conv_lst[i](cnn_in))
-        if sentence.size(0)>1: cnn_in = self.norm_lst[i](cnn_in)
+          cnn_in = F.relu(self.conv_lst[i](cnn_in))
+          if sentence.size(0)>1:
+              cnn_in = self.norm_lst[i](cnn_in)
+      #print("cnn_in shape: " + str(cnn_in.shape))
 
       cnn_out = cnn_in.transpose(2,1).contiguous()
-      #print(cnn_out.shape)
+      #print("cnn_out shape: " + str(cnn_out.shape))
 
-      tag_space = self.output(cnn_out)
-
-      return tag_space
+      output = self.output(cnn_out)
+      #print("output shape: " + str(output.shape))
+      #print()
+      return output
 
 
 

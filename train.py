@@ -28,45 +28,52 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
 
     val_dataset = prepare_dataset(val_data, vocabulary, label2idx)
     test_dataset = prepare_dataset(test_data, vocabulary, label2idx)
+    random.shuffle(val_dataset)
+    random.shuffle(test_dataset)
     batched_val = batch_data(val_dataset, vocabulary, label2idx, batch_size)
     batched_test = batch_data(test_dataset, vocabulary, label2idx, batch_size)
 
     #model initialization
-    vocab_size = len(vocabulary)
     num_tags = len(labels)
+    vocab_size = len(vocabulary)
+
     model = word_lstm.BiLSTM(vocab_size, embedding_dim, hidden_dim, num_tags, use_crf=crf)
-    #model = word_cnn.CNN(vocab_size, embedding_dim, hidden_dim, cnn_layers, num_tags)
-    model.embedding.weight = nn.Parameter(vocabulary.vectors)
+    #model = word_cnn.CNN(vocab_size, embedding_dim, hidden_dim, cnn_layers, num_tags, crf)
+
+    model.embedding.weight = nn.Parameter(vocabulary.vectors, requires_grad=True)
     optimizer = optim.SGD(model.parameters(), lr=initial_lr, weight_decay=1e-8)
-    loss_function = nn.NLLLoss(ignore_index=-1, size_average=False)
+    loss_function = nn.NLLLoss(ignore_index=-1, reduction="sum")
+    softmax = nn.LogSoftmax(2)
 
     #training
     for num in range(epoch):
         print("Epoch " + str(num) + ":")
         train_dataset = prepare_dataset(train_data, vocabulary, label2idx)
-        random.shuffle(train_dataset) ##shuffle train data and then batch the shuffled data
+        np.random.shuffle(train_dataset) ##shuffle train data and then batch the shuffled data
         print("Shuffle: first input list: " + str(train_dataset[0][0]))
         batched_train = batch_data(train_dataset, vocabulary, label2idx, batch_size)
         model.train()
         optimizer = lr_decay(optimizer, num, decay_rate, initial_lr)
+
         batch = 0
         epoch_loss = 0.0
+        #optimizer.zero_grad()
         for i, (sent,label) in enumerate(batched_train):
             optimizer.zero_grad()
             batch += 1
             outs = model(sent)
-
             if crf:
-                mask = (label >= 0)
+                mask = (label>=0)
                 loss = -(model.crf.forward(outs, label, mask=mask))
             else:
-                score = model.softmax(outs)  # output shape: [number of tokens in the batch, 17]
+                score = softmax(outs)  # output shape: [number of tokens in the batch, 17]
                 score = torch.flatten(score, end_dim=1)
                 gold = torch.flatten(label)
                 loss = loss_function(score, gold)
 
+            #optimizer.zero_grad()
             loss.backward()
-            epoch_loss += loss.detach().item()
+            epoch_loss += loss.item()
             optimizer.step()
 
         #val and test evaluation between epochs
@@ -86,7 +93,7 @@ def evaluate(dataset:List, model, output_file, extension, crf):
     total_pred = []
     total_tokens = []
     for i,(sent_seq, gold_seq) in enumerate(dataset):
-        mask = (gold_seq >= 0)
+        mask = (gold_seq>=0)
         pred = predict(model, sent_seq, mask, crf)
 
         gold = torch.masked_select(gold_seq, mask)
@@ -194,9 +201,9 @@ def prepare_dataset(corpus:ingest.Corpus, vocabulary, label2idx: Dict[str,int]) 
 if __name__ == "__main__":
     batch_size = 10
     hidden_units = 200
-    epochs = 100
+    epochs = 200
     lr = 0.015
-    crf = False
+    crf = True
     conll_train = ingest.load_conll('data/conll2003/en/BIOES/NE_only/train.bmes')
     conll_val = ingest.load_conll('data/conll2003/en/BIOES/NE_only/valid.bmes')
     conll_test = ingest.load_conll('data/conll2003/en/BIOES/NE_only/test.bmes')

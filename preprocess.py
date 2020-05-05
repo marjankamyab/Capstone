@@ -35,13 +35,12 @@ def build_vocab(train_corpus:ingest.Corpus, val_corpus:ingest.Corpus, test_corpu
     no_match = 0
     for i,vocab in enumerate(vocabulary.stoi):
         if vocab in pretrained.stoi:
-            vocabulary.vectors[vocabulary.stoi[vocab]] = pretrained.vectors[pretrained.stoi[vocab]]
             perfect_match+=1
         elif vocab.lower() in pretrained.stoi:
             vocabulary.vectors[vocabulary.stoi[vocab]] = pretrained.vectors[pretrained.stoi[vocab.lower()]]
             case_match+=1
         else:
-            vocabulary.vectors[vocabulary.stoi[vocab]] = torch.tensor(np.random.uniform(-scale, scale, embedding_dim), requires_grad=True)
+            vocabulary.vectors[vocabulary.stoi[vocab]] = torch.tensor(np.random.uniform(-scale, scale, embedding_dim))
             no_match+=1
 
     print("vocabulary size: " + str(len(vocabulary.vectors)))

@@ -13,10 +13,6 @@ class BiLSTM(nn.Module):
 
         self.hidden_dim = hidden_dim
 
-        self.use_crf = use_crf
-
-        self.softmax = nn.LogSoftmax(2)
-
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
 
         self.lstm = nn.LSTM(embedding_dim, self.hidden_dim//2, num_layers=1, bidirectional=True, batch_first=True)
@@ -41,7 +37,7 @@ class BiLSTM(nn.Module):
         #print("packed_output shape: " + str(lstm_out.data.shape))
         unpacked_out, _ = pad_packed_sequence(lstm_out, batch_first=True, padding_value=-1) #output shape: [5, max_sent_length, 64] if bidirectional
         #print("unpacked_output shape: " + str(unpacked_out.data.shape))
-        output = self.output(unpacked_out)# output shape: [sum(seq_lengths, 17]
+        output = self.output(unpacked_out.contiguous())# output shape: [sum(seq_lengths, 17]
         #print("output shape: " + str(output.shape))
         #print()
         return output
