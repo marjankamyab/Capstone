@@ -19,7 +19,7 @@ print("Seed num: " + str(manualSeed))
 
 
 def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Corpus,
-          vocabulary, label2idx,
+          vocabulary, alphabet, label2idx,
           embedding_dim:int, hidden_dim:int, cnn_layers:int,
           batch_size:int=1, initial_lr:float=0.015, decay_rate:float=0.0, epoch:int=1, crf=False,
           val_output_path="./output/output_files/val/val_output",
@@ -28,17 +28,18 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
 
     val_dataset = prepare_dataset(val_data, vocabulary, label2idx)
     test_dataset = prepare_dataset(test_data, vocabulary, label2idx)
-    random.shuffle(val_dataset)
-    random.shuffle(test_dataset)
-    batched_val = batch_data(val_dataset, vocabulary, label2idx, batch_size)
-    batched_test = batch_data(test_dataset, vocabulary, label2idx, batch_size)
+    ##TO DO: put shuffle in prepare_dataset function
+    #random.shuffle(val_dataset)
+    #random.shuffle(test_dataset)
+    batched_val = batch_data(val_dataset, vocabulary, batch_size)
+    batched_test = batch_data(test_dataset, vocabulary, batch_size)
 
     #model initialization
     num_tags = len(labels)
     vocab_size = len(vocabulary)
 
-    model = word_lstm.BiLSTM(vocab_size, embedding_dim, hidden_dim, num_tags, use_crf=crf)
-    #model = word_cnn.CNN(vocab_size, embedding_dim, hidden_dim, cnn_layers, num_tags, crf)
+    #model = word_lstm.BiLSTM(vocab_size, embedding_dim, hidden_dim, num_tags, use_crf=crf)
+    model = word_cnn.CNN(vocab_size, embedding_dim, hidden_dim, cnn_layers, num_tags, crf)
 
     model.embedding.weight = nn.Parameter(vocabulary.vectors, requires_grad=True)
     optimizer = optim.SGD(model.parameters(), lr=initial_lr, weight_decay=1e-8)
@@ -49,9 +50,9 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
     for num in range(epoch):
         print("Epoch " + str(num) + ":")
         train_dataset = prepare_dataset(train_data, vocabulary, label2idx)
-        np.random.shuffle(train_dataset) ##shuffle train data and then batch the shuffled data
+        random.shuffle(train_dataset) ##shuffle train data and then batch the shuffled data
         print("Shuffle: first input list: " + str(train_dataset[0][0]))
-        batched_train = batch_data(train_dataset, vocabulary, label2idx, batch_size)
+        batched_train = batch_data(train_dataset, vocabulary, batch_size)
         model.train()
         optimizer = lr_decay(optimizer, num, decay_rate, initial_lr)
 
@@ -59,6 +60,7 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
         epoch_loss = 0.0
         #optimizer.zero_grad()
         for i, (sent,label) in enumerate(batched_train):
+            batch_length = sent[0].size(0)
             optimizer.zero_grad()
             batch += 1
             outs = model(sent)
@@ -69,7 +71,7 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
                 score = softmax(outs)  # output shape: [number of tokens in the batch, 17]
                 score = torch.flatten(score, end_dim=1)
                 gold = torch.flatten(label)
-                loss = loss_function(score, gold)
+                loss = loss_function(score, gold)/batch_length
 
             #optimizer.zero_grad()
             loss.backward()
@@ -149,15 +151,17 @@ def pl2output(file):
     return pl2string
 
 
-def batch_data(data, vocabulary, label2idx, batch_size):
-    indexed_sentences, indexed_labels = zip(*data)
+def batch_data(data, vocabulary, batch_size):
+    indexed_sentences, indexed_words, indexed_labels = zip(*data)
     sent_batch = _batchify(indexed_sentences, batch_size)
+    word_batch = _batchify(indexed_words, batch_size)
     label_batch = _batchify(indexed_labels, batch_size)
 
     dataset = []
     for i, sentences in enumerate(sent_batch):
         labels = label_batch[i]
         new_sent_batch = []
+        new_word_batch = []
         new_label_batch = []
         seq_lengths = torch.LongTensor(list(map(len, sentences)))
         seq_lengths, perm_idx = seq_lengths.sort(0, descending=True)
@@ -165,6 +169,9 @@ def batch_data(data, vocabulary, label2idx, batch_size):
         for j, sent in enumerate(sentences):
             padded_sent = _padding(sent, seq_lengths.max(), vocabulary.stoi["<pad>"])
             new_sent_batch.append(padded_sent)
+
+            #for w, word in enumerate(sent):
+
 
         for k, label in enumerate(labels):
             padded_label = _padding(label, seq_lengths.max(), -1)
@@ -195,18 +202,19 @@ def _index_seq(mappings:Dict[str,int], sequence:Tuple[str, ...]) -> List[int]:
 
 def prepare_dataset(corpus:ingest.Corpus, vocabulary, label2idx: Dict[str,int]) -> List:
     indexed_sents = [_index_seq(vocabulary.stoi, sent) for document in corpus for sent in document.sentences]
+    indexed_words = [_index_seq(alphabet, word) for document in corpus for sent in document.sentences for word in sent]
     indexed_labs = [_index_seq(label2idx, lab) for document in corpus for lab in document.labels]
-    return list(zip(indexed_sents, indexed_labs))
+    return list(zip(indexed_sents, indexed_words, indexed_labs))
 
 if __name__ == "__main__":
     batch_size = 10
     hidden_units = 200
     epochs = 200
-    lr = 0.015
-    crf = True
-    conll_train = ingest.load_conll('data/conll2003/en/BIOES/NE_only/train.bmes')
-    conll_val = ingest.load_conll('data/conll2003/en/BIOES/NE_only/valid.bmes')
-    conll_test = ingest.load_conll('data/conll2003/en/BIOES/NE_only/test.bmes')
+    lr = 0.005
+    crf = False
+    conll_train = ingest.load_conll('data/conll2003/en/BIO/NE_only/train.txt')
+    conll_val = ingest.load_conll('data/conll2003/en/BIO/NE_only/valid.txt')
+    conll_test = ingest.load_conll('data/conll2003/en/BIO/NE_only/test.txt')
     train_tokens = []
     total_instances = 0
     for document in conll_train:
@@ -214,7 +222,7 @@ if __name__ == "__main__":
             train_tokens.extend(sent)
             total_instances += 1
     #training
-    vocab, labels= preprocess.build_vocab(conll_train, conll_val, conll_test)
+    vocab, alphabet, labels= preprocess.build_vocab(conll_train, conll_val, conll_test)
     label_lst = list(labels.keys())
     embedding_dim = vocab.vectors.size(1)
     vocab_lst = vocab.itos
@@ -227,5 +235,5 @@ if __name__ == "__main__":
     print("number of hidden units: " + str(hidden_units))
     print("number of epochs: " + str(epochs))
     print("tag scheme: " + str(labels))
-    train(conll_train, conll_val, conll_test, vocab, labels, embedding_dim, hidden_units, 4,
+    train(conll_train, conll_val, conll_test, vocab, alphabet, labels, embedding_dim, hidden_units, 4,
           batch_size=batch_size, initial_lr=lr, decay_rate=0.05, epoch=epochs, crf=crf)
