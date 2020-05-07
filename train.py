@@ -21,7 +21,7 @@ print("Seed num: " + str(manualSeed))
 def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Corpus,
           vocabulary, alphabet, label2idx,
           embedding_dim:int, hidden_dim:int, cnn_layers:int,
-          batch_size:int=1, initial_lr:float=0.015, decay_rate:float=0.0, epoch:int=1, crf=False,
+          mode="BiLSTM", batch_size:int=1, initial_lr:float=0.0005, decay_rate:float=0.0, epoch:int=1, crf=False,
           val_output_path="./output/output_files/val/val_output",
           test_output_path="./output/output_files/test/test_output") \
           -> None:
@@ -29,8 +29,8 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
     val_dataset = prepare_dataset(val_data, vocabulary, label2idx)
     test_dataset = prepare_dataset(test_data, vocabulary, label2idx)
     ##TO DO: put shuffle in prepare_dataset function
-    #random.shuffle(val_dataset)
-    #random.shuffle(test_dataset)
+    random.shuffle(val_dataset)
+    random.shuffle(test_dataset)
     batched_val = batch_data(val_dataset, vocabulary, batch_size)
     batched_test = batch_data(test_dataset, vocabulary, batch_size)
 
@@ -38,8 +38,10 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
     num_tags = len(labels)
     vocab_size = len(vocabulary)
 
-    #model = word_lstm.BiLSTM(vocab_size, embedding_dim, hidden_dim, num_tags, use_crf=crf)
-    model = word_cnn.CNN(vocab_size, embedding_dim, hidden_dim, cnn_layers, num_tags, crf)
+    if mode.lower()== "bilstm":
+        model = word_lstm.BiLSTM(vocab_size, embedding_dim, hidden_dim, num_tags, use_crf=crf)
+    else:
+        model = word_cnn.CNN(vocab_size, embedding_dim, hidden_dim, cnn_layers, num_tags, crf)
 
     model.embedding.weight = nn.Parameter(vocabulary.vectors, requires_grad=True)
     optimizer = optim.SGD(model.parameters(), lr=initial_lr, weight_decay=1e-8)
@@ -48,12 +50,12 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
 
     #training
     for num in range(epoch):
+        model.train()
         print("Epoch " + str(num) + ":")
         train_dataset = prepare_dataset(train_data, vocabulary, label2idx)
         random.shuffle(train_dataset) ##shuffle train data and then batch the shuffled data
         print("Shuffle: first input list: " + str(train_dataset[0][0]))
         batched_train = batch_data(train_dataset, vocabulary, batch_size)
-        model.train()
         optimizer = lr_decay(optimizer, num, decay_rate, initial_lr)
 
         batch = 0
@@ -64,6 +66,8 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
             optimizer.zero_grad()
             batch += 1
             outs = model(sent)
+
+            #calculate loss
             if crf:
                 mask = (label>=0)
                 loss = -(model.crf.forward(outs, label, mask=mask))
@@ -79,6 +83,7 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
             optimizer.step()
 
         #val and test evaluation between epochs
+        model.eval()
         ext = str(num) + "_" + str(batch)
         print(" epoch loss: " + str(epoch_loss))
         val_file = evaluate(batched_val, model, val_output_path, ext, crf)
@@ -207,6 +212,7 @@ def prepare_dataset(corpus:ingest.Corpus, vocabulary, label2idx: Dict[str,int]) 
     return list(zip(indexed_sents, indexed_words, indexed_labs))
 
 if __name__ == "__main__":
+    mode = "CNN"
     batch_size = 10
     hidden_units = 200
     epochs = 200
@@ -226,6 +232,7 @@ if __name__ == "__main__":
     label_lst = list(labels.keys())
     embedding_dim = vocab.vectors.size(1)
     vocab_lst = vocab.itos
+    print("model: " + mode)
     print("train number of instances: " + str(total_instances))
     print("train number of tokens: " + str(len(train_tokens)))
     print("crf: " + str(crf))
@@ -235,5 +242,7 @@ if __name__ == "__main__":
     print("number of hidden units: " + str(hidden_units))
     print("number of epochs: " + str(epochs))
     print("tag scheme: " + str(labels))
-    train(conll_train, conll_val, conll_test, vocab, alphabet, labels, embedding_dim, hidden_units, 4,
-          batch_size=batch_size, initial_lr=lr, decay_rate=0.05, epoch=epochs, crf=crf)
+    train(conll_train, conll_val, conll_test,
+          vocab, alphabet, labels,
+          embedding_dim, hidden_units, 4,
+          mode=mode, batch_size=batch_size, initial_lr=lr, decay_rate=0.05, epoch=epochs, crf=crf)
