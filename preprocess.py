@@ -30,7 +30,7 @@ def build_vocab(train_corpus:ingest.Corpus, val_corpus:ingest.Corpus, test_corpu
     # initializing character dictionary
     char_counter = Counter(char_lst)
     chars = char_counter.most_common()
-    char2idx = {char:id for id,(char,count) in enumerate(chars)}
+    char2idx = {char:id+1 for id,(char,count) in enumerate(chars)}
 
     # initializing word vectors
     vocab_counter = Counter(vocab_lst)
@@ -66,15 +66,17 @@ def _normalize_digits(token):
     return new_token
 
 
-def _get_alphabet(corpus: ingest.Corpus) -> Tuple[List[str], List[str]]:
+def _get_alphabet(corpus: ingest.Corpus) -> Tuple[List[str], List[str], List[str]]:
     tokens = []
     chars = []
     labels = []
     for document in corpus:
         for i,sentence in enumerate(document.sentences):
             labels.extend(document.labels[i])
+
             for token in sentence:
                 tokens.append(_normalize_digits(token))
+
                 for char in token:
                     chars.append(char)
 

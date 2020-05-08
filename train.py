@@ -6,7 +6,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import subprocess
-import torch.nn.functional as F
+torch.set_printoptions(edgeitems=500)
+
 
 
 # seed should essentially be initialized outside training to be consistent programwide
@@ -20,30 +21,32 @@ print("Seed num: " + str(manualSeed))
 
 def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Corpus,
           vocabulary, alphabet, label2idx,
-          embedding_dim:int, hidden_dim:int, cnn_layers:int,
-          mode="BiLSTM", batch_size:int=1, initial_lr:float=0.0005, decay_rate:float=0.0, epoch:int=1, crf=False,
+          word_embedding_dim:int, char_embedding_dim:int,
+          hidden_dim:int, char_hidden_dim:int, cnn_layers:int,
+          mode="BiLSTM", batch_size:int=1,
+          initial_lr:float=0.0005, decay_rate:float=0.0,
+          epoch:int=1, crf=False,
           val_output_path="./output/output_files/val/val_output",
           test_output_path="./output/output_files/test/test_output") \
           -> None:
 
-    val_dataset = prepare_dataset(val_data, vocabulary, label2idx)
-    test_dataset = prepare_dataset(test_data, vocabulary, label2idx)
-    ##TO DO: put shuffle in prepare_dataset function
-    random.shuffle(val_dataset)
-    random.shuffle(test_dataset)
+
+    val_dataset = prepare_dataset(val_data, vocabulary, alphabet, label2idx)
+    test_dataset = prepare_dataset(test_data, vocabulary, alphabet, label2idx)
     batched_val = batch_data(val_dataset, vocabulary, batch_size)
     batched_test = batch_data(test_dataset, vocabulary, batch_size)
 
     #model initialization
     num_tags = len(labels)
     vocab_size = len(vocabulary)
+    alphabet_size = len(alphabet)
 
-    if mode.lower()== "bilstm":
-        model = word_lstm.BiLSTM(vocab_size, embedding_dim, hidden_dim, num_tags, use_crf=crf)
+    if mode.lower() == "bilstm":
+        model = word_lstm.BiLSTM(vocab_size, word_embedding_dim, hidden_dim, num_tags, use_crf=crf)
     else:
-        model = word_cnn.CNN(vocab_size, embedding_dim, hidden_dim, cnn_layers, num_tags, crf)
+        model = word_cnn.CNN(vocab_size, alphabet_size, word_embedding_dim, char_embedding_dim, hidden_dim, char_hidden_dim, cnn_layers, num_tags, use_crf=crf)
 
-    model.embedding.weight = nn.Parameter(vocabulary.vectors, requires_grad=True)
+    model.word_embedding.weight = nn.Parameter(vocabulary.vectors, requires_grad=True)
     optimizer = optim.SGD(model.parameters(), lr=initial_lr, weight_decay=1e-8)
     loss_function = nn.NLLLoss(ignore_index=-1, reduction="sum")
     softmax = nn.LogSoftmax(2)
@@ -52,7 +55,7 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
     for num in range(epoch):
         model.train()
         print("Epoch " + str(num) + ":")
-        train_dataset = prepare_dataset(train_data, vocabulary, label2idx)
+        train_dataset = prepare_dataset(train_data, vocabulary, alphabet, label2idx)
         random.shuffle(train_dataset) ##shuffle train data and then batch the shuffled data
         print("Shuffle: first input list: " + str(train_dataset[0][0]))
         batched_train = batch_data(train_dataset, vocabulary, batch_size)
@@ -60,12 +63,11 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
 
         batch = 0
         epoch_loss = 0.0
-        #optimizer.zero_grad()
-        for i, (sent,label) in enumerate(batched_train):
-            batch_length = sent[0].size(0)
+        for i, (sent, chars, label) in enumerate(batched_train):
             optimizer.zero_grad()
+            batch_length = sent[0].size(0)
             batch += 1
-            outs = model(sent)
+            outs = model(sent, chars)
 
             #calculate loss
             if crf:
@@ -75,11 +77,12 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
                 score = softmax(outs)  # output shape: [number of tokens in the batch, 17]
                 score = torch.flatten(score, end_dim=1)
                 gold = torch.flatten(label)
-                loss = loss_function(score, gold)/batch_length
+                loss = loss_function(score, gold)
+                if mode.lower()!= "bilstm":
+                    loss /= batch_length
 
-            #optimizer.zero_grad()
             loss.backward()
-            epoch_loss += loss.item()
+            epoch_loss += loss.detach().item()
             optimizer.step()
 
         #val and test evaluation between epochs
@@ -99,9 +102,9 @@ def evaluate(dataset:List, model, output_file, extension, crf):
     total_gold = []
     total_pred = []
     total_tokens = []
-    for i,(sent_seq, gold_seq) in enumerate(dataset):
+    for i,(sent_seq, char_seq, gold_seq) in enumerate(dataset):
         mask = (gold_seq>=0)
-        pred = predict(model, sent_seq, mask, crf)
+        pred = predict(model, sent_seq, char_seq, mask, crf)
 
         gold = torch.masked_select(gold_seq, mask)
         batch_sents = torch.masked_select(sent_seq[0], mask)
@@ -129,8 +132,8 @@ def lr_decay(optimizer, epoch, decay_rate, init_lr):
     return optimizer
 
 
-def predict(model, sent:List[List], mask: torch.Tensor, crf:bool):
-    output = model(sent)
+def predict(model, sent:Tuple[torch.tensor], chars:Tuple[torch.tensor], mask: torch.Tensor, crf:bool):
+    output = model(sent, chars)
     batch_predictions = []
     if crf:
         pred_lst = model.crf.decode(output, mask=mask)  ##output type: List[List[int]]
@@ -140,7 +143,6 @@ def predict(model, sent:List[List], mask: torch.Tensor, crf:bool):
         pred = torch.argmax(output, dim=2)  ##gathering token predictions for the entire batch
         pred = torch.masked_select(pred, mask)
         batch_predictions = [pred[i].detach().item() for i in range(len(pred))]
-
     return batch_predictions
 
 
@@ -165,31 +167,58 @@ def batch_data(data, vocabulary, batch_size):
     dataset = []
     for i, sentences in enumerate(sent_batch):
         labels = label_batch[i]
+        sent_words = word_batch[i]
+
         new_sent_batch = []
         new_word_batch = []
         new_label_batch = []
+
         seq_lengths = torch.LongTensor(list(map(len, sentences)))
         seq_lengths, perm_idx = seq_lengths.sort(0, descending=True)
 
-        for j, sent in enumerate(sentences):
-            padded_sent = _padding(sent, seq_lengths.max(), vocabulary.stoi["<pad>"])
+        for i, sent in enumerate(sentences):
+            padded_sent = torch.LongTensor(_padding(sent, seq_lengths.max(), vocabulary.stoi["<pad>"]))
             new_sent_batch.append(padded_sent)
 
-            #for w, word in enumerate(sent):
+            padded_sent_words = _padding(sent_words[i], seq_lengths.max(), [0]) #for chars
+            new_word_batch.append(padded_sent_words) #for chars
 
-
-        for k, label in enumerate(labels):
-            padded_label = _padding(label, seq_lengths.max(), -1)
+        for label in labels:
+            padded_label = torch.LongTensor(_padding(label, seq_lengths.max(), -1))
             new_label_batch.append(padded_label)
 
         new_sent_batch = torch.stack(new_sent_batch)
         new_label_batch = torch.stack(new_label_batch)
         new_sent_batch = new_sent_batch[perm_idx]
         new_label_batch = new_label_batch[perm_idx]
-        dataset.append([(new_sent_batch, seq_lengths), new_label_batch])
+
+        #dealing with chars
+        batch_words = [word for word_lst in new_word_batch for word in word_lst]
+        word_lengths = torch.LongTensor(list(map(len, batch_words)))
+        word_lengths = word_lengths.view(len(sentences), seq_lengths.max())
+        char_seq_tensor = torch.zeros((batch_size, seq_lengths.max(), word_lengths.max()), requires_grad=True).long()
+        for j, word_lst in enumerate(sent_words):
+            for k, char_lst in enumerate(word_lst):
+                padded_char_lst = torch.LongTensor(_padding(char_lst, word_lengths.max(), 0))
+                char_seq_tensor[j, k, :] = padded_char_lst
+
+        char_seq_tensor = char_seq_tensor[perm_idx]
+        flat_char_seq = torch.flatten(char_seq_tensor, end_dim=1)
+
+        char_seq_lengths = word_lengths[perm_idx].flatten()
+        char_seq_lengths, char_perm_idx = char_seq_lengths.sort(0, descending=True)
+        new_char_batch = flat_char_seq[char_perm_idx]
+        #print(new_char_batch)
+        #print()
+
+        dataset.append([(new_sent_batch, seq_lengths), (new_char_batch, char_seq_lengths), new_label_batch])
 
     return dataset
 
+def _padding(seq:List[int], max_length:int, pad_value) -> torch.LongTensor:
+    while(len(seq)< max_length):
+        seq.append(pad_value)
+    return seq
 
 def _batchify(lst, n):
     batches = []
@@ -197,52 +226,65 @@ def _batchify(lst, n):
         batches.append(lst[i: i+n])
     return batches
 
-def _padding(seq:List[int], max_length:int, pad_value) -> torch.LongTensor:
-    while(len(seq)< max_length):
-        seq.append(pad_value)
-    return torch.LongTensor(seq)
-
 def _index_seq(mappings:Dict[str,int], sequence:Tuple[str, ...]) -> List[int]:
     return [mappings[preprocess._normalize_digits(element)] for element in sequence]  # shape = torch.Size([len(sentence)])
 
-def prepare_dataset(corpus:ingest.Corpus, vocabulary, label2idx: Dict[str,int]) -> List:
-    indexed_sents = [_index_seq(vocabulary.stoi, sent) for document in corpus for sent in document.sentences]
-    indexed_words = [_index_seq(alphabet, word) for document in corpus for sent in document.sentences for word in sent]
-    indexed_labs = [_index_seq(label2idx, lab) for document in corpus for lab in document.labels]
-    return list(zip(indexed_sents, indexed_words, indexed_labs))
+def prepare_dataset(corpus:ingest.Corpus, vocabulary, alphabet:Dict[str,int], label2idx:Dict[str,int]) -> List[List]:
+    indexed_sents = []
+    indexed_labs = []
+    indexed_word_chars = []
+    for document in corpus:
+        for i, sent in enumerate(document.sentences):
+            lab = document.labels[i]
+            sent_words = _index_seq(vocabulary.stoi, sent)
+            sent_labels = _index_seq(label2idx, lab)
+
+            sent_word_strings = []
+            for word in sent:
+                word_chars = _index_seq(alphabet, word)
+                sent_word_strings.append(word_chars)
+
+            indexed_sents.append(sent_words)
+            indexed_labs.append(sent_labels)
+            indexed_word_chars.append(sent_word_strings)
+
+    return list(zip(indexed_sents, indexed_word_chars, indexed_labs))
 
 if __name__ == "__main__":
+
     mode = "CNN"
     batch_size = 10
     hidden_units = 200
     epochs = 200
     lr = 0.005
     crf = False
+
     conll_train = ingest.load_conll('data/conll2003/en/BIO/NE_only/train.txt')
     conll_val = ingest.load_conll('data/conll2003/en/BIO/NE_only/valid.txt')
     conll_test = ingest.load_conll('data/conll2003/en/BIO/NE_only/test.txt')
-    train_tokens = []
-    total_instances = 0
-    for document in conll_train:
-        for i,sent in enumerate(document.sentences):
-            train_tokens.extend(sent)
-            total_instances += 1
+
     #training
     vocab, alphabet, labels= preprocess.build_vocab(conll_train, conll_val, conll_test)
     label_lst = list(labels.keys())
-    embedding_dim = vocab.vectors.size(1)
+    word_embedding_dim = vocab.vectors.size(1)
+    char_embedding_dim = 30
+    char_hidden_units = 50
     vocab_lst = vocab.itos
+
     print("model: " + mode)
-    print("train number of instances: " + str(total_instances))
-    print("train number of tokens: " + str(len(train_tokens)))
     print("crf: " + str(crf))
     print("batch size: " + str(batch_size))
     print("learning rate: " + str(lr))
-    print("embedding dimension: " + str(embedding_dim))
+    print("embedding dimension: " + str(word_embedding_dim))
     print("number of hidden units: " + str(hidden_units))
     print("number of epochs: " + str(epochs))
     print("tag scheme: " + str(labels))
+
+
     train(conll_train, conll_val, conll_test,
           vocab, alphabet, labels,
-          embedding_dim, hidden_units, 4,
-          mode=mode, batch_size=batch_size, initial_lr=lr, decay_rate=0.05, epoch=epochs, crf=crf)
+          word_embedding_dim, char_embedding_dim,
+          hidden_units, char_hidden_units, 4,
+          mode=mode, batch_size=batch_size,
+          initial_lr=lr, decay_rate=0.05,
+          epoch=epochs, crf=crf)
