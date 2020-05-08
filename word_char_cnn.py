@@ -40,12 +40,16 @@ class CNN(nn.Module):
 
 
   def forward(self, sent, chars):
-      char, _ = chars
+      char, char_recover_perms = chars
       sentence, _ = sent
       batch_size, sent_length= sentence.size()
       word_embeddings = self.word_embedding(sentence)
       #print("word_embedding:", word_embeddings.size())
-      char_embeddings = self.char_embedding.get_embedding(char).view(batch_size, sent_length, -1)
+      char_embeddings = self.char_embedding.get_embedding(char)
+      #print("char_embedding size:", char_embeddings.size())
+      char_embeddings = char_embeddings[char_recover_perms]
+      #print("char_embedding size:", char_embeddings.size())
+      char_embeddings = char_embeddings.view(batch_size, sent_length, -1)
       #print("char_embedding size:", char_embeddings.size())
       embedding_lst = [char_embeddings]+[word_embeddings]
       embeddings = torch.cat(embedding_lst, dim=2)
