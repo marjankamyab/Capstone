@@ -1,5 +1,6 @@
+import preprocess, ingest, word_char_lstm, word_char_cnn
 from typing import List, Dict, Tuple
-import preprocess, ingest, word_lstm, word_cnn
+from torchtext.vocab import Vocab
 import random
 import numpy as np
 import torch
@@ -20,12 +21,12 @@ print("Seed num: " + str(manualSeed))
 
 
 def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Corpus,
-          vocabulary, alphabet, label2idx,
+          vocabulary:Vocab, alphabet:Dict[str,int], label2idx:Dict[str,int],
           word_embedding_dim:int, char_embedding_dim:int,
           hidden_dim:int, char_hidden_dim:int, cnn_layers:int,
-          mode="BiLSTM", batch_size:int=1,
-          initial_lr:float=0.0005, decay_rate:float=0.0,
-          epoch:int=1, crf=False,
+          batch_size:int=1, epoch:int=1,
+          dropout:float=0.0, initial_lr:float=0.015, decay_rate:float=0.0,
+          mode="LSTM", crf:bool=False, char:bool=False,
           val_output_path="./output/output_files/val/val_output",
           test_output_path="./output/output_files/test/test_output") \
           -> None:
@@ -41,10 +42,10 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
     vocab_size = len(vocabulary)
     alphabet_size = len(alphabet)
 
-    if mode.lower() == "bilstm":
-        model = word_lstm.BiLSTM(vocab_size, word_embedding_dim, hidden_dim, num_tags, use_crf=crf)
+    if mode.lower() == "lstm":
+        model = word_char_lstm.BiLSTM(vocab_size, alphabet_size, word_embedding_dim, char_embedding_dim, hidden_dim, char_hidden_dim, num_tags, dropout, use_crf=crf, use_char=char)
     else:
-        model = word_cnn.CNN(vocab_size, alphabet_size, word_embedding_dim, char_embedding_dim, hidden_dim, char_hidden_dim, cnn_layers, num_tags, use_crf=crf)
+        model = word_char_cnn.CNN(vocab_size, alphabet_size, word_embedding_dim, char_embedding_dim, hidden_dim, char_hidden_dim, cnn_layers, num_tags, dropout, use_crf=crf, use_char=char)
 
     model.word_embedding.weight = nn.Parameter(vocabulary.vectors, requires_grad=True)
     optimizer = optim.SGD(model.parameters(), lr=initial_lr, weight_decay=1e-8)
@@ -57,7 +58,7 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
         print("Epoch " + str(num) + ":")
         train_dataset = prepare_dataset(train_data, vocabulary, alphabet, label2idx)
         random.shuffle(train_dataset) ##shuffle train data and then batch the shuffled data
-        print("Shuffle: first input list: " + str(train_dataset[0][0]))
+        print("Shuffle: first input list:", train_dataset[0][0])
         batched_train = batch_data(train_dataset, vocabulary, batch_size)
         optimizer = lr_decay(optimizer, num, decay_rate, initial_lr)
 
@@ -78,7 +79,7 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
                 score = torch.flatten(score, end_dim=1)
                 gold = torch.flatten(label)
                 loss = loss_function(score, gold)
-                if mode.lower()!= "bilstm":
+                if mode.lower()!= "lstm":
                     loss /= batch_length
 
             loss.backward()
@@ -88,7 +89,7 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
         #val and test evaluation between epochs
         model.eval()
         ext = str(num) + "_" + str(batch)
-        print(" epoch loss: " + str(epoch_loss))
+        print(" epoch loss:", epoch_loss)
         val_file = evaluate(batched_val, model, val_output_path, ext, crf)
         test_file = evaluate(batched_test, model, test_output_path, ext, crf)
         val_pl = pl2output(val_file)
@@ -116,7 +117,33 @@ def evaluate(dataset:List, model, output_file, extension, crf):
     tokens = [vocab_lst[token.item()] for token in total_tokens]
     golds = [label_lst[gold.item()] for gold in total_gold]
     preds = [label_lst[tag] for tag in total_pred]
-    zipped = zip(tokens, golds, preds)
+
+    fixed_preds = []
+    fixed_golds = []
+    positive=0
+    for i, pred in enumerate(preds):
+        gold = golds[i]
+        if pred == gold:
+            positive+=1
+
+        if pred.startswith('S'):
+            pred = 'B'+pred[1:]
+        elif pred.startswith('E'):
+            pred = 'I'+pred[1:]
+
+        if gold.startswith('S'):
+            gold = 'B'+gold[1:]
+        elif gold.startswith('E'):
+            gold = 'I'+gold[1:]
+
+        fixed_preds.append(pred)
+        fixed_golds.append(gold)
+
+    accuracy = positive/len(preds)
+    print("accuracy:", accuracy)
+
+    #zipped = zip(tokens, golds, preds)
+    zipped = zip(tokens, fixed_golds, fixed_preds)
 
     output_path = output_file + str(extension) + '.txt'
     write_output(output_path, zipped)
@@ -124,7 +151,7 @@ def evaluate(dataset:List, model, output_file, extension, crf):
     return output_path
 
 
-def lr_decay(optimizer, epoch, decay_rate, init_lr):
+def lr_decay(optimizer, epoch:int, decay_rate:float, init_lr:float):
     lr = init_lr/(1+decay_rate*epoch)
     print(" Learning rate is set as:", lr)
     for param_group in optimizer.param_groups:
@@ -201,26 +228,23 @@ def batch_data(data, vocabulary, batch_size):
             for k, char_lst in enumerate(word_lst):
                 padded_char_lst = torch.LongTensor(_padding(char_lst, word_lengths.max(), 0))
                 char_seq_tensor[j, k, :] = padded_char_lst
-
         char_seq_tensor = char_seq_tensor[perm_idx]
         flat_char_seq = torch.flatten(char_seq_tensor, end_dim=1)
-
         char_seq_lengths = word_lengths[perm_idx].flatten()
         char_seq_lengths, char_perm_idx = char_seq_lengths.sort(0, descending=True)
         new_char_batch = flat_char_seq[char_perm_idx]
-        #print(new_char_batch)
-        #print()
+        _, char_seq_recover = char_perm_idx.sort(0, descending=False)
 
-        dataset.append([(new_sent_batch, seq_lengths), (new_char_batch, char_seq_lengths), new_label_batch])
+        dataset.append([(new_sent_batch, seq_lengths), (new_char_batch, char_seq_recover), new_label_batch])
 
     return dataset
 
-def _padding(seq:List[int], max_length:int, pad_value) -> torch.LongTensor:
+def _padding(seq:List, max_length:int, pad_value:int) -> List:
     while(len(seq)< max_length):
         seq.append(pad_value)
     return seq
 
-def _batchify(lst, n):
+def _batchify(lst:List, n:int):
     batches = []
     for i in range(0, len(lst), n):
         batches.append(lst[i: i+n])
@@ -229,7 +253,7 @@ def _batchify(lst, n):
 def _index_seq(mappings:Dict[str,int], sequence:Tuple[str, ...]) -> List[int]:
     return [mappings[preprocess._normalize_digits(element)] for element in sequence]  # shape = torch.Size([len(sentence)])
 
-def prepare_dataset(corpus:ingest.Corpus, vocabulary, alphabet:Dict[str,int], label2idx:Dict[str,int]) -> List[List]:
+def prepare_dataset(corpus:ingest.Corpus, vocabulary, alphabet:Dict[str,int], label2idx:Dict[str,int]) -> List:
     indexed_sents = []
     indexed_labs = []
     indexed_word_chars = []
@@ -252,39 +276,49 @@ def prepare_dataset(corpus:ingest.Corpus, vocabulary, alphabet:Dict[str,int], la
 
 if __name__ == "__main__":
 
-    mode = "CNN"
+    '''manualSeed = 43
+    random.seed(manualSeed)
+    np.random.seed(manualSeed)
+    torch.manual_seed(manualSeed)'''
+
+    mode = "lstm"
     batch_size = 10
     hidden_units = 200
-    epochs = 200
-    lr = 0.005
-    crf = False
+    epochs = 50
+    drop = 0.5
+    lr = 0.015
+    char_embedding_dim = 30
+    char_hidden_units = 50
+    crf = True
+    char = True
 
-    conll_train = ingest.load_conll('data/conll2003/en/BIO/NE_only/train.txt')
-    conll_val = ingest.load_conll('data/conll2003/en/BIO/NE_only/valid.txt')
-    conll_test = ingest.load_conll('data/conll2003/en/BIO/NE_only/test.txt')
+    conll_train = ingest.load_conll('data/conll2003/en/BIOES/NE_only/train.bmes')
+    conll_val = ingest.load_conll('data/conll2003/en/BIOES/NE_only/valid.bmes')
+    conll_test = ingest.load_conll('data/conll2003/en/BIOES/NE_only/test.bmes')
 
     #training
     vocab, alphabet, labels= preprocess.build_vocab(conll_train, conll_val, conll_test)
     label_lst = list(labels.keys())
     word_embedding_dim = vocab.vectors.size(1)
-    char_embedding_dim = 30
-    char_hidden_units = 50
     vocab_lst = vocab.itos
 
-    print("model: " + mode)
-    print("crf: " + str(crf))
-    print("batch size: " + str(batch_size))
-    print("learning rate: " + str(lr))
-    print("embedding dimension: " + str(word_embedding_dim))
-    print("number of hidden units: " + str(hidden_units))
-    print("number of epochs: " + str(epochs))
-    print("tag scheme: " + str(labels))
+    print("model:", mode)
+    print("use crf:", crf)
+    print("use character embedding:", char)
+    print("batch size:", batch_size)
+    print("learning rate:", lr)
+    print("word embedding dimension:", word_embedding_dim)
+    print("character embedding dimension:", char_embedding_dim)
+    print("number of hidden units:", hidden_units)
+    print("number of character hidden units", char_hidden_units)
+    print("number of epochs:", epochs)
+    print("tag scheme:", labels)
 
 
     train(conll_train, conll_val, conll_test,
-          vocab, alphabet, labels,
-          word_embedding_dim, char_embedding_dim,
-          hidden_units, char_hidden_units, 4,
-          mode=mode, batch_size=batch_size,
-          initial_lr=lr, decay_rate=0.05,
-          epoch=epochs, crf=crf)
+        vocab, alphabet, labels,
+        word_embedding_dim, char_embedding_dim,
+        hidden_units, char_hidden_units, 4,
+        batch_size=batch_size, epoch=epochs,
+        dropout=drop, initial_lr=lr, decay_rate=0.05,
+        mode=mode, crf=crf, char=char)

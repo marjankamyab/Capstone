@@ -77,7 +77,7 @@ def _get_alphabet(corpus: ingest.Corpus) -> Tuple[List[str], List[str], List[str
             for token in sentence:
                 tokens.append(_normalize_digits(token))
 
-                for char in token:
+                for char in _normalize_digits(token):
                     chars.append(char)
 
     return tokens, chars, labels
