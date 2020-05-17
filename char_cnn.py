@@ -6,7 +6,7 @@ torch.set_printoptions(edgeitems=500)
 
 
 class CharCNN(nn.Module):
-    def __init__(self, alphabet_size, embedding_dim, hidden_dim):
+    def __init__(self, alphabet_size, embedding_dim, hidden_dim, dropout):
 
         super(CharCNN, self).__init__()
 
@@ -20,11 +20,14 @@ class CharCNN(nn.Module):
 
         self.cnn = nn.Conv1d(embedding_dim, hidden_dim, kernel_size=3, padding=1)
 
+        self.drop = nn.Dropout(dropout)
+
+
 
     def get_embedding(self, chars):
         batch_size = chars.size(0)
         #print("chars shape:", chars.size())
-        embeddings = self.embedding(chars)
+        embeddings = self.drop(self.embedding(chars))
         #print("char embedding shape:", embeddings.size())
         transposed = embeddings.transpose(2,1).contiguous()
         #print("char embedding transposed shape:", transposed.size())
