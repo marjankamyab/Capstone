@@ -1,5 +1,6 @@
-import preprocess, ingest, word_char_lstm, word_char_cnn
-from typing import List, Dict, Tuple
+import preprocess, ingest, word_lstm, word_cnn
+from typing import List, Dict, Tuple, Optional
+from argparse import ArgumentParser
 from torchtext.vocab import Vocab
 import random
 import numpy as np
@@ -13,11 +14,6 @@ torch.set_printoptions(edgeitems=500)
 
 # seed should essentially be initialized outside training to be consistent programwide
 # specially for initializing oov vectors in the preprocess file
-manualSeed = 42
-random.seed(manualSeed)
-np.random.seed(manualSeed)
-torch.manual_seed(manualSeed)
-print("Seed num: " + str(manualSeed))
 
 
 def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Corpus,
@@ -26,10 +22,7 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
           hidden_dim:int, char_hidden_dim:int, cnn_layers:int,
           batch_size:int=1, epoch:int=1,
           dropout:float=0.0, initial_lr:float=0.015, decay_rate:float=0.0,
-          mode="LSTM", crf:bool=False, char:bool=False,
-          val_output_path="./output/output_files/val/val_output",
-          test_output_path="./output/output_files/test/test_output") \
-          -> None:
+          mode='LSTM', crf:bool=False, char:bool=False) -> None:
 
 
     val_dataset = prepare_dataset(val_data, vocabulary, alphabet, label2idx)
@@ -37,15 +30,19 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
     batched_val = batch_data(val_dataset, vocabulary, batch_size)
     batched_test = batch_data(test_dataset, vocabulary, batch_size)
 
+    vocab_lst = vocabulary.itos
+    label_lst = list(label2idx.keys())
+
+
     #model initialization
-    num_tags = len(labels)
+    num_tags = len(label2idx)
     vocab_size = len(vocabulary)
     alphabet_size = len(alphabet)
 
-    if mode.lower() == "lstm":
-        model = word_char_lstm.BiLSTM(vocab_size, alphabet_size, word_embedding_dim, char_embedding_dim, hidden_dim, char_hidden_dim, num_tags, dropout, use_crf=crf, use_char=char)
+    if mode.lower() == 'lstm':
+        model = word_lstm.BiLSTM(vocab_size, alphabet_size, word_embedding_dim, char_embedding_dim, hidden_dim, char_hidden_dim, num_tags, dropout, use_crf=crf, use_char=char)
     else:
-        model = word_char_cnn.CNN(vocab_size, alphabet_size, word_embedding_dim, char_embedding_dim, hidden_dim, char_hidden_dim, cnn_layers, num_tags, dropout, use_crf=crf, use_char=char)
+        model = word_cnn.CNN(vocab_size, alphabet_size, word_embedding_dim, char_embedding_dim, hidden_dim, char_hidden_dim, cnn_layers, num_tags, dropout, use_crf=crf, use_char=char)
 
     model.word_embedding.weight = nn.Parameter(vocabulary.vectors, requires_grad=True)
     optimizer = optim.SGD(model.parameters(), lr=initial_lr, weight_decay=1e-8)
@@ -88,18 +85,20 @@ def train(train_data:ingest.Corpus, val_data:ingest.Corpus, test_data:ingest.Cor
 
         #val and test evaluation between epochs
         model.eval()
-        ext = str(num) + "_" + str(batch)
         print(" epoch loss:", epoch_loss)
-        val_file = evaluate(batched_val, model, val_output_path, ext, crf)
-        test_file = evaluate(batched_test, model, test_output_path, ext, crf)
-        val_pl = pl2output(val_file)
-        test_pl = pl2output(test_file)
+        val_output, val_acc = evaluate(batched_val, model, crf, vocab_lst, label_lst)
+        test_output, test_acc = evaluate(batched_test, model, crf, vocab_lst, label_lst)
+        val_pl = pl2output(val_output)
+        test_pl = pl2output(test_output)
         print('dev results: ', val_pl)
+        print("Dev Accuracy", val_acc)
+        print()
         print('test results: ', test_pl)
+        print("Test Accuracy", test_acc)
         print()
 
 
-def evaluate(dataset:List, model, output_file, extension, crf):
+def evaluate(dataset:List, model:Optional, crf:bool, vocab_lst, label_lst):
     total_gold = []
     total_pred = []
     total_tokens = []
@@ -140,15 +139,13 @@ def evaluate(dataset:List, model, output_file, extension, crf):
         fixed_golds.append(gold)
 
     accuracy = positive/len(preds)
-    print("accuracy:", accuracy)
 
-    #zipped = zip(tokens, golds, preds)
-    zipped = zip(tokens, fixed_golds, fixed_preds)
+    lines = []
+    for i, token in enumerate(tokens):
+        line = [token, fixed_golds[i], fixed_preds[i]]
+        lines.append(" ".join(line))
 
-    output_path = output_file + str(extension) + '.txt'
-    write_output(output_path, zipped)
-
-    return output_path
+    return lines, accuracy
 
 
 def lr_decay(optimizer, epoch:int, decay_rate:float, init_lr:float):
@@ -166,22 +163,17 @@ def predict(model, sent:Tuple[torch.tensor], chars:Tuple[torch.tensor], mask: to
         pred_lst = model.crf.decode(output, mask=mask)  ##output type: List[List[int]]
         for pred in pred_lst:
             batch_predictions.extend(pred)
+
     else:
         pred = torch.argmax(output, dim=2)  ##gathering token predictions for the entire batch
         pred = torch.masked_select(pred, mask)
         batch_predictions = [pred[i].detach().item() for i in range(len(pred))]
+
     return batch_predictions
 
 
-def write_output(file, zipped_file):
-    with open(file, 'w') as f:
-        for token, gold, pred in zipped_file:
-            f.write(token + " " + gold + " " + pred)
-            f.write("\n")
-
-def pl2output(file):
-    with open(file, 'rb', 0) as f:
-        pl2string = subprocess.check_output(['perl', 'conlleval.pl'], stdin=f, universal_newlines=True)
+def pl2output(lines):
+    pl2string = subprocess.check_output(['perl', 'conlleval.pl'], input="\n".join(lines), encoding="utf8")
     return pl2string
 
 
@@ -274,23 +266,31 @@ def prepare_dataset(corpus:ingest.Corpus, vocabulary, alphabet:Dict[str,int], la
 
     return list(zip(indexed_sents, indexed_word_chars, indexed_labs))
 
-if __name__ == "__main__":
 
-    '''manualSeed = 43
+def main() -> None:
+    parser = ArgumentParser()
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--mode", type=str, default="lstm")
+    parser.add_argument("--crf", type=bool, default=False)
+    parser.add_argument("--char", type=bool, default=False)
+    args = parser.parse_args()
+
+    manualSeed = args.seed
+    mode = args.mode
+    crf = args.crf
+    char = args.char
+
     random.seed(manualSeed)
     np.random.seed(manualSeed)
-    torch.manual_seed(manualSeed)'''
+    torch.manual_seed(manualSeed)
 
-    mode = "lstm"
     batch_size = 10
     hidden_units = 200
-    epochs = 50
+    epochs = 100
     drop = 0.5
     lr = 0.015
     char_embedding_dim = 30
     char_hidden_units = 50
-    crf = True
-    char = True
 
     conll_train = ingest.load_conll('data/conll2003/en/BIOES/NE_only/train.bmes')
     conll_val = ingest.load_conll('data/conll2003/en/BIOES/NE_only/valid.bmes')
@@ -298,10 +298,9 @@ if __name__ == "__main__":
 
     #training
     vocab, alphabet, labels= preprocess.build_vocab(conll_train, conll_val, conll_test)
-    label_lst = list(labels.keys())
     word_embedding_dim = vocab.vectors.size(1)
-    vocab_lst = vocab.itos
 
+    print('Seed num:', manualSeed)
     print("model:", mode)
     print("use crf:", crf)
     print("use character embedding:", char)
@@ -313,12 +312,19 @@ if __name__ == "__main__":
     print("number of character hidden units", char_hidden_units)
     print("number of epochs:", epochs)
     print("tag scheme:", labels)
-
+    print()
 
     train(conll_train, conll_val, conll_test,
-        vocab, alphabet, labels,
-        word_embedding_dim, char_embedding_dim,
-        hidden_units, char_hidden_units, 4,
-        batch_size=batch_size, epoch=epochs,
-        dropout=drop, initial_lr=lr, decay_rate=0.05,
-        mode=mode, crf=crf, char=char)
+          vocab, alphabet, labels,
+          word_embedding_dim, char_embedding_dim,
+          hidden_units, char_hidden_units, 4,
+          batch_size=batch_size, epoch=epochs,
+          dropout=drop, initial_lr=lr, decay_rate=0.05,
+          mode=mode, crf=crf, char=char)
+
+
+if __name__ == "__main__":
+    main()
+
+
+
