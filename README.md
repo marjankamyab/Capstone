@@ -1,1 +1,1 @@
-# Capstone Project: Popular Nueral NER Models
+# Capstone Project: Popular Neural NER Models
